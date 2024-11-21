@@ -135,6 +135,16 @@
   <ItemGroup>
     <ClCompile Include="MaxPower.cpp" />
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Methods.h" />
+    <ClInclude Include="resource.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="MaxPower.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="icon.ico" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
