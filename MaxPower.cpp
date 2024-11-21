@@ -3,25 +3,11 @@
 const string HIGH_PERFORMANCE_GUID = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
 const string BALANCED_GUID = "381b4222-f694-41f0-9685-ff5bb260df2e";
 const string POWER_SAVER_GUID = "a1841308-3541-4fab-bc81-f71556f20b4a";
-shared_ptr<string> CurrentTitle{ make_shared<string>("WINDOWS POWER MANAGER") };
-atomic<bool> ProgramClosing{ false };
-atomic<int> Darken{ 0 };
-
-static void async_worker()
-{
-    int i = 0;
-    while (!ProgramClosing) {
-        i++;
-        Darken = 0;
-        if (i == 2) Darken = 2;
-        else if (i == 3) i = 0;
-        pause;
-    }
-}
 
 int main()
 {
     thread worker(async_worker);
+    thread cursor(cursor_blinking);
     load_settings();
     setup_setting();
     bool do_clear = true;
@@ -59,7 +45,7 @@ int main()
                     cout << "\n\033[32mSuccess!" << endl;
                 }
                 else cout << "\n\033[31mFailed to set power plan!" << endl;
-                pause;
+                this_thread::sleep_for(chrono::seconds(1));
                 break;
 
             case 50:
@@ -70,7 +56,7 @@ int main()
                     cout << "\n\033[32mSuccess!" << endl;
                 }
                 else cout << "\n\033[31mFailed to set power plan!" << endl;
-                pause;
+                this_thread::sleep_for(chrono::seconds(1));
                 break;
 
             case 51:
@@ -81,7 +67,7 @@ int main()
                     cout << "\n\033[32mSuccess!" << endl;
                 }
                 else cout << "\n\033[31mFailed to set power plan!" << endl;
-                pause;
+                this_thread::sleep_for(chrono::seconds(1));
                 break;
             case 52:
                 settings();
@@ -89,6 +75,7 @@ int main()
             case 27:
                 ProgramClosing = true;
                 worker.join();
+                cursor.join();
                 exit(0);
                 break;
             default:
@@ -99,74 +86,6 @@ int main()
             do_clear = false;
     }
     worker.join();
+    cursor.join();
     return 0;
-}
-
-static void settings()
-{
-    bool do_clear = true;
-    int new_value;
-    while (true)
-    {
-        CurrentTitle = make_shared<string>("WPM SETTINGS");
-        set_cursor_pos(0, 0);
-        string item1 = DisplayBrightness ? "ON" : "OFF";
-        cout << "\033[36m.---------------------------------.\n"
-            << endl
-            << "|=================================|\n"
-            << "|                                 |\n"
-            << "|" << draw_item("1", "Display brightness: " + item1) << "|\n"
-            << "|" << draw_item("2", "HP Brightness: " + to_string(HPB) + "%") << "|\n"
-            << "|" << draw_item("3", "BP Brightness: " + to_string(BPB) + "%") << "|\n"
-            << "|" << draw_item("4", "PS Brightness: " + to_string(PSB) + "%") << "|\n"
-            << "|                                 |\n"
-            << "|" << draw_item("ESC", "Return", "1") << "|\n"
-            << "|                                 |\n" << flush;
-        if (DisplayBrightness)
-            cout << "|---------------------------------|\n" << endl << flush;
-        cout << "'---------------------------------'\033[0m" << flush;
-        draw_title(*CurrentTitle, 33, to_string(Darken));
-        if (DisplayBrightness)
-            draw_parameter(12, "BRT", get_screen_brightness());
-        do_clear = true;
-        if (_kbhit()) {
-            switch (_getch())
-            {
-            case 49:
-                clear;
-                DisplayBrightness = !DisplayBrightness;
-                setup_setting();
-                break;
-            case 50:
-                show_cursor();
-                new_value = get_value(5);
-                if (new_value != -1)
-                    HPB = new_value;
-                hide_cursor();
-                break;
-            case 51:
-                show_cursor();
-                new_value = get_value(6);
-                if (new_value != -1)
-                    BPB = new_value;
-                hide_cursor();
-                break;
-            case 52:
-                show_cursor();
-                new_value = get_value(7);
-                if (new_value != -1)
-                    PSB = new_value;
-                hide_cursor();
-                break;
-            case 27:
-                save_settings();
-                return;
-                break;
-            default:
-                do_clear = false;
-            }
-        }
-        else
-            do_clear = false;
-    }
 }

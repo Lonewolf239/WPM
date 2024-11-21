@@ -15,19 +15,22 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
+#include <utility>
 #pragma comment(lib, "wbemuuid.lib")
 #pragma comment(lib, "pdh.lib")
 #define clear system("cls");
-#define pause this_thread::sleep_for(chrono::seconds(1));
 
 using namespace std;
 
 static void set_cursor_pos(int x, int y);
+static void set_cursor_pos(COORD pos);
+static void draw_cursor();
+static pair<int, int> get_current_colors();
+static COORD get_cursor_pos();
 static void set_brightness(int brightness);
 static bool set_power_plan(const string& guid);
 static float get_screen_brightness();
 static void hide_cursor();
-static void show_cursor();
 static void set_position();
 static void font_size_setup();
 static void setup_setting();
@@ -40,16 +43,62 @@ static int get_value(int y);
 static void save_settings();
 static void load_settings();
 static vector<string> split(string s, char delimiter);
+static void async_worker();
+static void cursor_blinking();
 static void settings();
+
+shared_ptr<string> CurrentTitle{ make_shared<string>("WINDOWS POWER MANAGER") };
+atomic<bool> ProgramClosing{ false };
+atomic<int> Darken{ 0 };
+atomic<bool> CursorVisible{ false };
+atomic<bool> CursorBlinked{ false };
 
 static bool DisplayBrightness = true;
 static int HPB = 100;
 static int BPB = 70;
 static int PSB = 35;
 
+static void async_worker()
+{
+    int i = 0;
+    while (!ProgramClosing) {
+        i++;
+        Darken = 0;
+        if (i == 1) Darken = 2;
+        else if (i == 2) i = 0;
+        this_thread::sleep_for(chrono::milliseconds(1500));
+    }
+}
+
+static void cursor_blinking()
+{
+    int i = -1;
+    while (!ProgramClosing)
+    {
+        if (!CursorVisible)
+        {
+            this_thread::sleep_for(chrono::milliseconds(100));
+            continue;
+        }
+        i++;
+        if (i == 48) CursorBlinked = true;
+        else if (i == 96)
+        {
+            CursorBlinked = false;
+            i = -1;
+        }
+        this_thread::sleep_for(chrono::microseconds(10));
+    }
+}
+
 static void set_cursor_pos(int x, int y)
 {
     COORD pos = { static_cast<SHORT>(x), static_cast<SHORT>(y) };
+    SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), pos);
+}
+
+static void set_cursor_pos(COORD pos)
+{
     SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), pos);
 }
 
@@ -163,15 +212,6 @@ static void hide_cursor()
     SetConsoleCursorInfo(handle, &structCursorInfo);
 }
 
-static void show_cursor()
-{
-    HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
-    CONSOLE_CURSOR_INFO structCursorInfo;
-    GetConsoleCursorInfo(handle, &structCursorInfo);
-    structCursorInfo.bVisible = TRUE;
-    SetConsoleCursorInfo(handle, &structCursorInfo);
-}
-
 static void set_position()
 {
     RECT r;
@@ -199,7 +239,7 @@ static void font_size_setup()
 
 static void setup_setting()
 {
-    SetConsoleTitleW(L"WPM v1.0 [By.Lonewolf239]");
+    SetConsoleTitleW(L"WPM v1.1 [By.Lonewolf239]");
     if (DisplayBrightness) system("mode con cols=35 lines=14");
     else system("mode con cols=35 lines=12");
     HWND console = GetConsoleWindow();
@@ -214,6 +254,11 @@ static void setup_setting()
     SetWindowLong(console, GWL_EXSTYLE, GetWindowLong(console, GWL_EXSTYLE) | WS_EX_LAYERED);
     SetWindowLong(console, GWL_STYLE,
         GetWindowLong(console, GWL_STYLE) & ~WS_MAXIMIZEBOX & ~WS_SIZEBOX & ~WS_MAXIMIZE | WS_BORDER);
+    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_CURSOR_INFO cursorInfo;
+    GetConsoleCursorInfo(hConsole, &cursorInfo);
+    cursorInfo.dwSize = 100;
+    SetConsoleCursorInfo(hConsole, &cursorInfo);
     hide_cursor();
     font_size_setup();
     set_position();
@@ -221,7 +266,6 @@ static void setup_setting()
     DWORD consoleMode;
     GetConsoleMode(consoleHandle, &consoleMode);
     SetConsoleMode(consoleHandle, consoleMode & ~(ENABLE_QUICK_EDIT_MODE | ENABLE_EXTENDED_FLAGS | ENABLE_INSERT_MODE));
-    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
     SetConsoleTextAttribute(hConsole, FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY);
     srand(static_cast<unsigned int>(time(NULL)));
     clear;
@@ -277,51 +321,57 @@ static int get_value(int y)
     char value[4] = { -1, -1, -1, 0 };
     int key = 0, index = 0;
     while (true) {
+        draw_title(*CurrentTitle, 33, to_string(Darken));
         set_cursor_pos(0, y);
-        cout << "|   \033[1mInput value: "
+        cout << "\033[36m|   \033[1mInput value: \033[0m\033[32m\033[1m"
             << (value[0] == -1 ? ' ' : value[0])
             << (value[1] == -1 ? ' ' : value[1])
             << (value[2] == -1 ? ' ' : value[2])
-            << "              |" << flush;
+            << "              \033[0m\033[36m|\033[0m" << flush;
         set_cursor_pos(17 + index, y);
-        key = _getch();
-        if (key == 13)
+        draw_cursor();
+        if (_kbhit())
         {
-            if (index > 0)
+            key = _getch();
+            if (key == 13)
             {
-                value[index] = '\0';
-                int num = atoi(value);
-                if (num >= 0 && num <= 100)
-                    return num;
-            }
-        }
-        else if (key == 8)
-        {
-            if (index > 0)
-                value[--index] = -1;
-        }
-        else if (key >= 48 && key <= 57)
-        {
-            if (index < 3)
-            {
-                if (index == 0)
-                    value[index++] = key;
-                else if (index == 1)
+                if (index > 0)
                 {
-                    if (value[0] == 48)
-                        continue;
+                    value[index] = '\0';
+                    int num = atoi(value);
+                    if (num >= 0 && num <= 100)
+                        return num;
+                }
+            }
+            else if (key == 8)
+            {
+                if (index > 0)
+                    value[--index] = -1;
+            }
+            else if (key >= 48 && key <= 57)
+            {
+                if (index < 3)
+                {
+                    if (index == 0)
+                        value[index++] = key;
+                    else if (index == 1)
+                    {
+                        if (value[0] == 48)
+                            continue;
                         int num = (value[0] - '0') * 10 + (key - '0');
-                    if (num <= 100)
-                        value[index++] = key;
-                }
-                else if (index == 2)
-                {
-                    int num = (value[0] - '0') * 100 + (value[1] - '0') * 10 + (key - '0');
-                    if (num <= 100)
-                        value[index++] = key;
+                        if (num <= 100)
+                            value[index++] = key;
+                    }
+                    else if (index == 2)
+                    {
+                        int num = (value[0] - '0') * 100 + (value[1] - '0') * 10 + (key - '0');
+                        if (num <= 100)
+                            value[index++] = key;
+                    }
                 }
             }
         }
+        this_thread::sleep_for(chrono::microseconds(10));
     }
 }
 
@@ -354,7 +404,7 @@ static void load_settings()
                 PSB = stoi(sd[3]);
             }
         }
-        catch (const exception& e)
+        catch (const exception&)
         {
             DisplayBrightness = true;
             HPB = 100;
@@ -377,4 +427,102 @@ static vector<string> split(string s, char delimiter)
     }
     res.push_back(s.substr(pos_start));
     return res;
+}
+
+static COORD get_cursor_pos()
+{
+    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_SCREEN_BUFFER_INFO cbsi;
+    GetConsoleScreenBufferInfo(hConsole, &cbsi);
+    return cbsi.dwCursorPosition;
+}
+
+static pair<int, int> get_current_colors()
+{
+    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    if (GetConsoleScreenBufferInfo(hConsole, &csbi))
+        return { csbi.wAttributes & 0x0F, (csbi.wAttributes >> 4) & 0x0F };
+    return { 7, 0 };
+}
+
+static void draw_cursor()
+{
+    set_cursor_pos(get_cursor_pos());
+    pair<int, int> color = get_current_colors();
+    if (CursorBlinked) 
+        cout << "\033[48;2;0;255;0m \033[0m" << flush;
+    else
+        cout << " " << flush;
+    cout << "\033[3" << color.first << "m\033[4" << color.second << "m" << flush;
+    set_cursor_pos(get_cursor_pos().X - 1, get_cursor_pos().Y);
+}
+
+static void settings()
+{
+    bool do_clear = true;
+    int new_value;
+    while (true)
+    {
+        CurrentTitle = make_shared<string>("WPM SETTINGS");
+        set_cursor_pos(0, 0);
+        string item1 = DisplayBrightness ? "ON" : "OFF";
+        cout << "\033[36m.---------------------------------.\n"
+            << endl
+            << "|=================================|\n"
+            << "|                                 |\n"
+            << "|" << draw_item("1", "Display brightness: " + item1) << "|\n"
+            << "|" << draw_item("2", "HP Brightness: " + to_string(HPB) + "%") << "|\n"
+            << "|" << draw_item("3", "BP Brightness: " + to_string(BPB) + "%") << "|\n"
+            << "|" << draw_item("4", "PS Brightness: " + to_string(PSB) + "%") << "|\n"
+            << "|                                 |\n"
+            << "|" << draw_item("ESC", "Return", "1") << "|\n"
+            << "|                                 |\n" << flush;
+        if (DisplayBrightness)
+            cout << "|---------------------------------|\n" << endl << flush;
+        cout << "'---------------------------------'\033[0m" << flush;
+        draw_title(*CurrentTitle, 33, to_string(Darken));
+        if (DisplayBrightness)
+            draw_parameter(12, "BRT", get_screen_brightness());
+        do_clear = true;
+        if (_kbhit()) {
+            switch (_getch())
+            {
+            case 49:
+                clear;
+                DisplayBrightness = !DisplayBrightness;
+                setup_setting();
+                break;
+            case 50:
+                CursorVisible = true;
+                new_value = get_value(5);
+                if (new_value != -1)
+                    HPB = new_value;
+                CursorVisible = false;
+                break;
+            case 51:
+                CursorVisible = true;
+                new_value = get_value(6);
+                if (new_value != -1)
+                    BPB = new_value;
+                CursorVisible = false;
+                break;
+            case 52:
+                CursorVisible = true;
+                new_value = get_value(7);
+                if (new_value != -1)
+                    PSB = new_value;
+                CursorVisible = false;
+                break;
+            case 27:
+                save_settings();
+                return;
+                break;
+            default:
+                do_clear = false;
+            }
+        }
+        else
+            do_clear = false;
+    }
 }
