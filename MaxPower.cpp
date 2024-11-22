@@ -1,35 +1,62 @@
 ﻿#include "Methods.h"
 
-const string HIGH_PERFORMANCE_GUID = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
-const string BALANCED_GUID = "381b4222-f694-41f0-9685-ff5bb260df2e";
-const string POWER_SAVER_GUID = "a1841308-3541-4fab-bc81-f71556f20b4a";
-
 int main()
 {
+    HANDLE hMutex = CreateMutex(NULL, TRUE, L"WPM_Unique_Mutex");
+    if (GetLastError() == ERROR_ALREADY_EXISTS)
+        return 0;
+    setup_setting();
     thread worker(async_worker);
+    if (!is_admin())
+    {
+        system("mode con cols=37 lines=9");
+        set_position();
+        CurrentTitle = "NOT ADMINISTRATOR";
+        while (true)
+        {
+            set_cursor_pos(0, 0);
+            wcout << "\033[36m.-----------------------------------.\n"
+                << endl
+                << "|===================================|\n"
+                << "|                                   |\n"
+                << "| \033[1mPlease run WPM as \033[4m\033[31madministrator\033[0m\033[1m\033[36m!\033[0m\033[36m  |\n"
+                << "|                                   |\n"
+                << "| \033[33mPress any key to exit...\033[0m\033[36m          |\n"
+                << "|                                   |\n"
+                << "'-----------------------------------'\033[0m" << flush;
+            draw_title(CurrentTitle, 35, to_string(Darken));
+            if (_kbhit())
+                break;
+            this_thread::sleep_for(chrono::milliseconds(10));
+        }
+        ProgramClosing = true;
+        worker.join();
+        if (hMutex != NULL)
+            CloseHandle(hMutex);
+        return 0;
+    }
     thread cursor(cursor_blinking);
     load_settings();
-    setup_setting();
     bool do_clear = true;
     while (true)
     {
-        CurrentTitle = make_shared<string>("WINDOWS POWER MANAGER");
+        CurrentTitle = "WINDOWS POWER MANAGER";
         set_cursor_pos(0, 0);
         cout << "\033[36m.---------------------------------.\n"
             << endl
             << "|=================================|\n"
             << "|                                 |\n"
-            << "|" << draw_item("1", "Hight Performance") << "|\n"
+            << "|" << draw_item("1", "High Performance") << "|\n"
             << "|" << draw_item("2", "Balanced Power") << "|\n"
             << "|" << draw_item("3", "Power Saver") << "|\n"
             << "|" << draw_item("4", "Settings") << "|\n"
             << "|                                 |\n"
             << "|" << draw_item("ESC", "Exit Program", "1") << "|\n"
-            << "|                                 |\n" << flush;
+            << "|                 \033[90mBy. Lonewolf239\033[0m\033[36m |\n" << flush;
         if (DisplayBrightness)
             cout << "|---------------------------------|\n" << endl << flush;
         cout << "'---------------------------------'\033[0m" << flush;
-        draw_title(*CurrentTitle, 33, to_string(Darken));
+        draw_title(CurrentTitle, 33, to_string(Darken));
         if (DisplayBrightness)
             draw_parameter(12, "BRT", get_screen_brightness());
         do_clear = true;
@@ -47,7 +74,6 @@ int main()
                 else cout << "\n\033[31mFailed to set power plan!" << endl;
                 this_thread::sleep_for(chrono::seconds(1));
                 break;
-
             case 50:
                 clear;
                 cout << "\033[33mSetting Balanced Power mode...\033[0m" << flush;
@@ -58,7 +84,6 @@ int main()
                 else cout << "\n\033[31mFailed to set power plan!" << endl;
                 this_thread::sleep_for(chrono::seconds(1));
                 break;
-
             case 51:
                 clear;
                 cout << "\033[33mSetting Power Saver mode...\033[0m" << flush;
@@ -76,6 +101,8 @@ int main()
                 ProgramClosing = true;
                 worker.join();
                 cursor.join();
+                if (hMutex != NULL)
+                    CloseHandle(hMutex);
                 exit(0);
                 break;
             default:
@@ -84,8 +111,11 @@ int main()
         }
         else
             do_clear = false;
+        this_thread::sleep_for(chrono::milliseconds(10));
     }
     worker.join();
     cursor.join();
+    if (hMutex != NULL)
+        CloseHandle(hMutex);
     return 0;
 }

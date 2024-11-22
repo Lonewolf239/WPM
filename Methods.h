@@ -1,4 +1,4 @@
-#include <iostream>
+﻿#include <iostream>
 #include <stdlib.h>
 #include <iomanip>
 #include <conio.h>
@@ -29,6 +29,7 @@ static pair<int, int> get_current_colors();
 static COORD get_cursor_pos();
 static void set_brightness(int brightness);
 static bool set_power_plan(const string& guid);
+static bool is_brightness_control_available();
 static float get_screen_brightness();
 static void hide_cursor();
 static void set_position();
@@ -38,7 +39,7 @@ static void draw_parameter(int position, const string& name, const float value);
 static string center_pad(const string& str, size_t width);
 static string right_pad(string& str, const size_t num, const char paddingChar = ' ');
 static void draw_title(string title, const size_t num, const string dark);
-static string draw_item(string i, string name, string color = "2");
+static string draw_item(string i, string name, string color = "2", bool enable = true);
 static int get_value(int y);
 static void save_settings();
 static void load_settings();
@@ -47,26 +48,30 @@ static void async_worker();
 static void cursor_blinking();
 static void settings();
 
-shared_ptr<string> CurrentTitle{ make_shared<string>("WINDOWS POWER MANAGER") };
-atomic<bool> ProgramClosing{ false };
-atomic<int> Darken{ 0 };
-atomic<bool> CursorVisible{ false };
-atomic<bool> CursorBlinked{ false };
+const string HIGH_PERFORMANCE_GUID = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
+const string BALANCED_GUID = "381b4222-f694-41f0-9685-ff5bb260df2e";
+const string POWER_SAVER_GUID = "a1841308-3541-4fab-bc81-f71556f20b4a";
+static string CurrentTitle = "WINDOWS POWER MANAGER";
+static atomic<bool> ProgramClosing{ false };
+static atomic<int> Darken{ 0 };
+static atomic<bool> CursorVisible{ false };
+static atomic<bool> CursorBlinked{ false };
 
-static bool DisplayBrightness = true;
+static bool DisplayBrightness = is_brightness_control_available();
 static int HPB = 100;
 static int BPB = 70;
 static int PSB = 35;
 
 static void async_worker()
 {
-    int i = 0;
+    int i = -1;
     while (!ProgramClosing) {
         i++;
         Darken = 0;
         if (i == 1) Darken = 2;
         else if (i == 2) i = 0;
-        this_thread::sleep_for(chrono::milliseconds(1500));
+        if (!ProgramClosing)
+            this_thread::sleep_for(chrono::milliseconds(1500));
     }
 }
 
@@ -87,7 +92,8 @@ static void cursor_blinking()
             CursorBlinked = false;
             i = -1;
         }
-        this_thread::sleep_for(chrono::microseconds(10));
+        if (!ProgramClosing)
+            this_thread::sleep_for(chrono::microseconds(10));
     }
 }
 
@@ -127,11 +133,11 @@ static float get_screen_brightness()
     HRESULT hres;
     hres = CoInitializeEx(0, COINIT_MULTITHREADED);
     if (FAILED(hres))
-        return 0;
+        return -1;
     hres = CoInitializeSecurity(0, -1, 0, 0, 0, 3, 0, EOAC_NONE, 0);
     if (FAILED(hres)) {
         CoUninitialize();
-        return 0;
+        return -1;
     }
     IWbemLocator* pLoc = NULL;
     hres = CoCreateInstance(
@@ -143,14 +149,14 @@ static float get_screen_brightness()
     );
     if (FAILED(hres)) {
         CoUninitialize();
-        return 0;
+        return -1;
     }
     IWbemServices* pSvc = NULL;
     hres = pLoc->ConnectServer(_bstr_t(L"ROOT\\WMI"), 0, 0, 0, 0, 0, 0, &pSvc);
     if (FAILED(hres)) {
         pLoc->Release();
         CoUninitialize();
-        return 0;
+        return -1;
     }
     hres = CoSetProxyBlanket(
         pSvc,
@@ -166,7 +172,7 @@ static float get_screen_brightness()
         pSvc->Release();
         pLoc->Release();
         CoUninitialize();
-        return 0;
+        return -1;
     }
     IEnumWbemClassObject* pEnumerator = NULL;
     hres = pSvc->ExecQuery(
@@ -180,7 +186,7 @@ static float get_screen_brightness()
         pSvc->Release();
         pLoc->Release();
         CoUninitialize();
-        return 0;
+        return -1;
     }
     IWbemClassObject* pclsObj = NULL;
     ULONG uReturn = 0;
@@ -201,6 +207,107 @@ static float get_screen_brightness()
     pLoc->Release();
     CoUninitialize();
     return brightness;
+}
+
+static bool is_brightness_control_available()
+{
+    HRESULT hres = CoInitializeEx(0, COINIT_MULTITHREADED);
+    if (FAILED(hres))
+        return false;
+    hres = CoInitializeSecurity(
+        NULL,
+        -1,
+        NULL,
+        NULL,
+        RPC_C_AUTHN_LEVEL_DEFAULT,
+        RPC_C_IMP_LEVEL_IMPERSONATE,
+        NULL,
+        EOAC_NONE,
+        NULL
+    );
+    if (FAILED(hres))
+    {
+        CoUninitialize();
+        return false;
+    }
+    IWbemLocator* pLoc = NULL;
+    hres = CoCreateInstance(
+        CLSID_WbemLocator,
+        0,
+        CLSCTX_INPROC_SERVER,
+        IID_IWbemLocator,
+        (LPVOID*)&pLoc
+    );
+    if (FAILED(hres))
+    {
+        CoUninitialize();
+        return false;
+    }
+    IWbemServices* pSvc = NULL;
+    hres = pLoc->ConnectServer(
+        _bstr_t(L"ROOT\\WMI"),
+        NULL,
+        NULL,
+        NULL,
+        0,
+        NULL,
+        NULL,
+        &pSvc
+    );
+    if (FAILED(hres))
+    {
+        pLoc->Release();
+        CoUninitialize();
+        return false;
+    }
+    hres = CoSetProxyBlanket(
+        pSvc,
+        RPC_C_AUTHN_WINNT,
+        RPC_C_AUTHZ_NONE,
+        NULL,
+        RPC_C_AUTHN_LEVEL_CALL,
+        RPC_C_IMP_LEVEL_IMPERSONATE,
+        NULL,
+        EOAC_NONE
+    );
+    if (FAILED(hres))
+    {
+        pSvc->Release();
+        pLoc->Release();
+        CoUninitialize();
+        return false;
+    }
+    IEnumWbemClassObject* pEnumerator = NULL;
+    hres = pSvc->ExecQuery(
+        bstr_t("WQL"),
+        bstr_t("SELECT * FROM WmiMonitorBrightnessMethods"),
+        WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
+        NULL,
+        &pEnumerator
+    );
+    if (FAILED(hres))
+    {
+        pSvc->Release();
+        pLoc->Release();
+        CoUninitialize();
+        return false;
+    }
+    IWbemClassObject* pclsObj = NULL;
+    ULONG uReturn = 0;
+    bool brightnessControlAvailable = false;
+    while (pEnumerator)
+    {
+        HRESULT hr = pEnumerator->Next(WBEM_INFINITE, 1, &pclsObj, &uReturn);
+        if (0 == uReturn)
+            break;
+        brightnessControlAvailable = true;
+        pclsObj->Release();
+    }
+    pEnumerator->Release();
+    pSvc->Release();
+    pLoc->Release();
+    CoUninitialize();
+    return brightnessControlAvailable;
 }
 
 static void hide_cursor()
@@ -237,9 +344,27 @@ static void font_size_setup()
     set_position();
 }
 
+static bool is_admin()
+{
+    BOOL bResult = FALSE;
+    PSID psidAdmin = NULL;
+    SID_IDENTIFIER_AUTHORITY NtAuthority = SECURITY_NT_AUTHORITY;
+    if (AllocateAndInitializeSid(&NtAuthority, 2,
+        SECURITY_BUILTIN_DOMAIN_RID,
+        DOMAIN_ALIAS_RID_ADMINS,
+        0, 0, 0, 0, 0, 0, &psidAdmin))
+    {
+        if (!CheckTokenMembership(NULL, psidAdmin, &bResult))
+            bResult = TRUE;
+    }
+    if (psidAdmin)
+        FreeSid(psidAdmin);
+    return bResult;
+}
+
 static void setup_setting()
 {
-    SetConsoleTitleW(L"WPM v1.1 [By.Lonewolf239]");
+    SetConsoleTitleW(L"WPM v1.2");
     if (DisplayBrightness) system("mode con cols=35 lines=14");
     else system("mode con cols=35 lines=12");
     HWND console = GetConsoleWindow();
@@ -254,14 +379,10 @@ static void setup_setting()
     SetWindowLong(console, GWL_EXSTYLE, GetWindowLong(console, GWL_EXSTYLE) | WS_EX_LAYERED);
     SetWindowLong(console, GWL_STYLE,
         GetWindowLong(console, GWL_STYLE) & ~WS_MAXIMIZEBOX & ~WS_SIZEBOX & ~WS_MAXIMIZE | WS_BORDER);
-    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-    CONSOLE_CURSOR_INFO cursorInfo;
-    GetConsoleCursorInfo(hConsole, &cursorInfo);
-    cursorInfo.dwSize = 100;
-    SetConsoleCursorInfo(hConsole, &cursorInfo);
     hide_cursor();
     font_size_setup();
     set_position();
+    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
     HANDLE consoleHandle = GetStdHandle(STD_INPUT_HANDLE);
     DWORD consoleMode;
     GetConsoleMode(consoleHandle, &consoleMode);
@@ -310,10 +431,11 @@ static void draw_title(string title, const size_t num, const string dark)
     cout << "\033[0m\033[36m|\033[" + dark + "m\033[33m" + center_pad(title, num) + "\033[0m\033[36m|" << flush;
 }
 
-static string draw_item(string i, string name, string color)
+static string draw_item(string i, string name, string color, bool enable)
 {
-    string result = "   \033[36m[\033[3" + color + "m" + i + "\033[36m] \033[1m";
-    return result +  right_pad(name, 52 - result.size()) + "\033[0m\033[36m";
+    string c = enable ? "\033[36m" : "\033[90m\033[2m";
+    string result = "   " + c + "[\033[3" + color + "m" + (enable ? "" : "\033[2m") + i + c + "] \033[1m";
+    return result + right_pad(name, (enable ? 52 : 64) - result.size()) + "\033[0m\033[36m";
 }
 
 static int get_value(int y)
@@ -321,7 +443,7 @@ static int get_value(int y)
     char value[4] = { -1, -1, -1, 0 };
     int key = 0, index = 0;
     while (true) {
-        draw_title(*CurrentTitle, 33, to_string(Darken));
+        draw_title(CurrentTitle, 33, to_string(Darken));
         set_cursor_pos(0, y);
         cout << "\033[36m|   \033[1mInput value: \033[0m\033[32m\033[1m"
             << (value[0] == -1 ? ' ' : value[0])
@@ -394,14 +516,16 @@ static void load_settings()
         string data;
         settings >> data;
         settings.close();
-
         try {
             vector<string> sd = split(data, ':');
             if (sd.size() >= 4) {
-                DisplayBrightness = stoi(sd[0]);
+                DisplayBrightness = is_brightness_control_available() ? stoi(sd[0]) : false;
                 HPB = stoi(sd[1]);
                 BPB = stoi(sd[2]);
                 PSB = stoi(sd[3]);
+                if (HPB < 0 || HPB > 100) HPB = 100;
+                if (BPB < 0 || BPB > 100) BPB = 70;
+                if (PSB < 0 || PSB > 100) PSB = 35;
             }
         }
         catch (const exception&)
@@ -412,6 +536,7 @@ static void load_settings()
             PSB = 35;
         }
     }
+    save_settings();
 }
 
 static vector<string> split(string s, char delimiter)
@@ -464,24 +589,24 @@ static void settings()
     int new_value;
     while (true)
     {
-        CurrentTitle = make_shared<string>("WPM SETTINGS");
+        CurrentTitle = "WPM SETTINGS";
         set_cursor_pos(0, 0);
         string item1 = DisplayBrightness ? "ON" : "OFF";
         cout << "\033[36m.---------------------------------.\n"
             << endl
             << "|=================================|\n"
             << "|                                 |\n"
-            << "|" << draw_item("1", "Display brightness: " + item1) << "|\n"
+            << "|" << draw_item("1", "Display brightness: " + item1, "2", is_brightness_control_available()) << "|\n"
             << "|" << draw_item("2", "HP Brightness: " + to_string(HPB) + "%") << "|\n"
             << "|" << draw_item("3", "BP Brightness: " + to_string(BPB) + "%") << "|\n"
             << "|" << draw_item("4", "PS Brightness: " + to_string(PSB) + "%") << "|\n"
             << "|                                 |\n"
             << "|" << draw_item("ESC", "Return", "1") << "|\n"
-            << "|                                 |\n" << flush;
+            << "|                 \033[90mBy. Lonewolf239\033[0m\033[36m |\n" << flush;
         if (DisplayBrightness)
             cout << "|---------------------------------|\n" << endl << flush;
         cout << "'---------------------------------'\033[0m" << flush;
-        draw_title(*CurrentTitle, 33, to_string(Darken));
+        draw_title(CurrentTitle, 33, to_string(Darken));
         if (DisplayBrightness)
             draw_parameter(12, "BRT", get_screen_brightness());
         do_clear = true;
@@ -489,6 +614,8 @@ static void settings()
             switch (_getch())
             {
             case 49:
+                if (!is_brightness_control_available())
+                    break;
                 clear;
                 DisplayBrightness = !DisplayBrightness;
                 setup_setting();
@@ -524,5 +651,6 @@ static void settings()
         }
         else
             do_clear = false;
+        this_thread::sleep_for(chrono::milliseconds(10));
     }
 }
