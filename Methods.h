@@ -16,6 +16,7 @@
 #include <sstream>
 #include <vector>
 #include <utility>
+#include <cmath>
 #pragma comment(lib, "wbemuuid.lib")
 #pragma comment(lib, "pdh.lib")
 #define clear system("cls");
@@ -32,13 +33,16 @@ static bool set_power_plan(const string& guid);
 static bool is_brightness_control_available();
 static float get_screen_brightness();
 static void hide_cursor();
+static void show_cursor();
+static bool cursor_visible();
 static void set_position();
 static void font_size_setup();
 static void setup_setting();
 static void draw_parameter(int position, const string& name, const float value);
 static string center_pad(const string& str, size_t width);
 static string right_pad(string& str, const size_t num, const char paddingChar = ' ');
-static void draw_title(string title, const size_t num, const string dark);
+static void draw_title(const string& title, const size_t num);
+static bool colors_support();
 static string draw_item(string i, string name, string color = "2", bool enable = true);
 static int get_value(int y);
 static void save_settings();
@@ -52,26 +56,44 @@ const string HIGH_PERFORMANCE_GUID = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
 const string BALANCED_GUID = "381b4222-f694-41f0-9685-ff5bb260df2e";
 const string POWER_SAVER_GUID = "a1841308-3541-4fab-bc81-f71556f20b4a";
 static string CurrentTitle = "WINDOWS POWER MANAGER";
+static atomic<bool> ColorsSupport = { colors_support() };
 static atomic<bool> ProgramClosing{ false };
-static atomic<int> Darken{ 0 };
+static atomic<int> Variable{ 0 };
 static atomic<bool> CursorVisible{ false };
 static atomic<bool> CursorBlinked{ false };
 
-static bool DisplayBrightness = is_brightness_control_available();
+static bool DisplayBrightness = { is_brightness_control_available() };
 static int HPB = 100;
 static int BPB = 70;
 static int PSB = 35;
 
+typedef NTSTATUS(WINAPI* RtlGetVersionPtr)(PRTL_OSVERSIONINFOW);
+static bool colors_support()
+{
+    HMODULE hMod = GetModuleHandleW(L"ntdll.dll");
+    if (hMod)
+    {
+        RtlGetVersionPtr fnRtlGetVersion = (RtlGetVersionPtr)GetProcAddress(hMod, "RtlGetVersion");
+        if (fnRtlGetVersion != nullptr)
+        {
+            RTL_OSVERSIONINFOW rovi = { 0 };
+            rovi.dwOSVersionInfoSize = sizeof(rovi);
+            if (fnRtlGetVersion(&rovi) == 0)
+                return rovi.dwMajorVersion >= 10;
+        }
+    }
+    return false;
+}
+
 static void async_worker()
 {
-    int i = -1;
-    while (!ProgramClosing) {
-        i++;
-        Darken = 0;
-        if (i == 1) Darken = 2;
-        else if (i == 2) i = 0;
+    int i = 0;
+    while (!ProgramClosing)
+    {
+        Variable++;
+        SetConsoleTitleW(L"WPM v1.3");
         if (!ProgramClosing)
-            this_thread::sleep_for(chrono::milliseconds(1500));
+            this_thread::sleep_for(chrono::milliseconds(50));
     }
 }
 
@@ -80,20 +102,32 @@ static void cursor_blinking()
     int i = -1;
     while (!ProgramClosing)
     {
-        if (!CursorVisible)
+        if (ColorsSupport)
         {
-            this_thread::sleep_for(chrono::milliseconds(100));
-            continue;
+            if (!CursorVisible)
+            {
+                this_thread::sleep_for(chrono::milliseconds(100));
+                continue;
+            }
+            i++;
+            if (i == 48) CursorBlinked = true;
+            else if (i == 96)
+            {
+                CursorBlinked = false;
+                i = -1;
+            }
+            if (!ProgramClosing)
+                this_thread::sleep_for(chrono::microseconds(10));
         }
-        i++;
-        if (i == 48) CursorBlinked = true;
-        else if (i == 96)
+        else
         {
-            CursorBlinked = false;
-            i = -1;
+            if (CursorVisible && !cursor_visible())
+                show_cursor();
+            else if (!CursorVisible && cursor_visible())
+                hide_cursor();
+            if (!ProgramClosing)
+                this_thread::sleep_for(chrono::microseconds(250));
         }
-        if (!ProgramClosing)
-            this_thread::sleep_for(chrono::microseconds(10));
     }
 }
 
@@ -319,6 +353,23 @@ static void hide_cursor()
     SetConsoleCursorInfo(handle, &structCursorInfo);
 }
 
+static void show_cursor()
+{
+    HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_CURSOR_INFO structCursorInfo;
+    GetConsoleCursorInfo(handle, &structCursorInfo);
+    structCursorInfo.bVisible = TRUE;
+    SetConsoleCursorInfo(handle, &structCursorInfo);
+}
+
+static bool cursor_visible()
+{
+    HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_CURSOR_INFO structCursorInfo;
+    GetConsoleCursorInfo(handle, &structCursorInfo);
+    return structCursorInfo.bVisible;
+}
+
 static void set_position()
 {
     RECT r;
@@ -364,7 +415,7 @@ static bool is_admin()
 
 static void setup_setting()
 {
-    SetConsoleTitleW(L"WPM v1.2");
+    SetConsoleTitleW(L"WPM v1.3");
     if (DisplayBrightness) system("mode con cols=35 lines=14");
     else system("mode con cols=35 lines=12");
     HWND console = GetConsoleWindow();
@@ -397,18 +448,41 @@ static void draw_parameter(int position, const string& name, const float value)
     const int barWidth = 20;
     int pos = static_cast<int>(barWidth * (value / 100.0));
     string progressBar = "\033[36m| \033[33m\033[3m" + name + " \033[33m[";
+    if (!ColorsSupport)
+        progressBar = "| " + name + " [";
     for (int i = 0; i < barWidth; ++i)
     {
-        if (i < pos) {
-            if (i < barWidth / 3) progressBar += "\033[32m#";
-            else if (i < 2 * barWidth / 3) progressBar += "\033[33m#";
-            else progressBar += "\033[31m#";
+        if (i < pos)
+        {
+            if (i < barWidth / 3)
+            {
+                if (ColorsSupport)
+                    progressBar += "\033[32m";
+                progressBar += "#";
+            }
+            else if (i < 2 * barWidth / 3)
+            {
+                if (ColorsSupport)
+                    progressBar += "\033[33m";
+                progressBar += "#";
+            }
+            else
+            {
+                if (ColorsSupport)
+                    progressBar += "\033[31m";
+                progressBar += "#";
+            }
         }
         else progressBar += " ";
     }
-    progressBar += "\033[33m]";
+    if (ColorsSupport)
+        progressBar += "\033[33m";
+    progressBar += "]";
     set_cursor_pos(0, position);
-    cout << progressBar << " \033[32m" << fixed << setprecision(0) << setw(3) << value << "%\033[0m \033[36m|" << flush;
+    if (ColorsSupport)
+        cout << progressBar << " \033[32m" << fixed << setprecision(0) << setw(3) << value << "%\033[0m \033[36m|" << flush;
+    else
+        cout << progressBar << " " << fixed << setprecision(0) << setw(3) << value << "% |" << flush;
 }
 
 static string center_pad(const string& str, size_t width)
@@ -425,14 +499,34 @@ static string right_pad(string& str, const size_t num, const char paddingChar)
     return str;
 }
 
-static void draw_title(string title, const size_t num, const string dark)
+static void draw_title(const string& title, const size_t num)
 {
     set_cursor_pos(0, 1);
-    cout << "\033[0m\033[36m|\033[" + dark + "m\033[33m" + center_pad(title, num) + "\033[0m\033[36m|" << flush;
+    if (!ColorsSupport)
+    {
+        cout << "|" << center_pad(title, num) << "|" << flush;
+        return;
+    }
+    int r = (int)(128 + 127 * sin(Variable * 0.1));
+    int g = (int)(128 + 127 * sin(Variable * 0.1 + 1.5));
+    int b = (int)(128 + 127 * sin(Variable * 0.1 + 3.0));
+    int bright_r = min(r + 100, 255);
+    int bright_g = min(g + 100, 255);
+    int bright_b = min(b + 100, 255);
+    cout << "\033[36m|"
+        << "\033[38;2;" << bright_r << ";" << bright_g << ";" << bright_b << "m"
+        << "\033[1m"
+        << center_pad(title, num) << "\033[0m\033[36m|\033[0m" << flush;
 }
 
 static string draw_item(string i, string name, string color, bool enable)
 {
+    if (!ColorsSupport)
+    {
+        string result = "   [" + i + "] ";
+        if (!enable) name = "DISABLED";
+        return result + right_pad(name, 33 - result.size());
+    }
     string c = enable ? "\033[36m" : "\033[90m\033[2m";
     string result = "   " + c + "[\033[3" + color + "m" + (enable ? "" : "\033[2m") + i + c + "] \033[1m";
     return result + right_pad(name, (enable ? 52 : 64) - result.size()) + "\033[0m\033[36m";
@@ -443,15 +537,27 @@ static int get_value(int y)
     char value[4] = { -1, -1, -1, 0 };
     int key = 0, index = 0;
     while (true) {
-        draw_title(CurrentTitle, 33, to_string(Darken));
+        draw_title(CurrentTitle, 33);
         set_cursor_pos(0, y);
-        cout << "\033[36m|   \033[1mInput value: \033[0m\033[32m\033[1m"
-            << (value[0] == -1 ? ' ' : value[0])
-            << (value[1] == -1 ? ' ' : value[1])
-            << (value[2] == -1 ? ' ' : value[2])
-            << "              \033[0m\033[36m|\033[0m" << flush;
-        set_cursor_pos(17 + index, y);
-        draw_cursor();
+        if (ColorsSupport)
+        {
+            cout << "\033[36m|   \033[1mInput value: \033[0m\033[32m\033[1m"
+                << (value[0] == -1 ? ' ' : value[0])
+                << (value[1] == -1 ? ' ' : value[1])
+                << (value[2] == -1 ? ' ' : value[2])
+                << "              \033[0m\033[36m|\033[0m" << flush;
+            set_cursor_pos(17 + index, y);
+            draw_cursor();
+        }
+        else
+        {
+            cout << "|   Input value: "
+                << (value[0] == -1 ? ' ' : value[0])
+                << (value[1] == -1 ? ' ' : value[1])
+                << (value[2] == -1 ? ' ' : value[2])
+                << "              " << flush;
+            set_cursor_pos(17 + index, y);
+        }
         if (_kbhit())
         {
             key = _getch();
@@ -592,21 +698,41 @@ static void settings()
         CurrentTitle = "WPM SETTINGS";
         set_cursor_pos(0, 0);
         string item1 = DisplayBrightness ? "ON" : "OFF";
-        cout << "\033[36m.---------------------------------.\n"
-            << endl
-            << "|=================================|\n"
-            << "|                                 |\n"
-            << "|" << draw_item("1", "Display brightness: " + item1, "2", is_brightness_control_available()) << "|\n"
-            << "|" << draw_item("2", "HP Brightness: " + to_string(HPB) + "%") << "|\n"
-            << "|" << draw_item("3", "BP Brightness: " + to_string(BPB) + "%") << "|\n"
-            << "|" << draw_item("4", "PS Brightness: " + to_string(PSB) + "%") << "|\n"
-            << "|                                 |\n"
-            << "|" << draw_item("ESC", "Return", "1") << "|\n"
-            << "|                 \033[90mBy. Lonewolf239\033[0m\033[36m |\n" << flush;
-        if (DisplayBrightness)
-            cout << "|---------------------------------|\n" << endl << flush;
-        cout << "'---------------------------------'\033[0m" << flush;
-        draw_title(CurrentTitle, 33, to_string(Darken));
+        if (ColorsSupport)
+        {
+            cout << "\033[36m.---------------------------------.\n"
+                << endl
+                << "|=================================|\n"
+                << "|                                 |\n"
+                << "|" << draw_item("1", "Display brightness: " + item1) << "|\n"
+                << "|" << draw_item("2", "HP Brightness: " + to_string(HPB) + "%") << "|\n"
+                << "|" << draw_item("3", "BP Brightness: " + to_string(BPB) + "%") << "|\n"
+                << "|" << draw_item("4", "PS Brightness: " + to_string(PSB) + "%") << "|\n"
+                << "|                                 |\n"
+                << "|" << draw_item("ESC", "Return", "1") << "|\n"
+                << "|                 \033[90mBy. Lonewolf239\033[0m\033[36m |\n" << flush;
+            if (DisplayBrightness)
+                cout << "|---------------------------------|\n" << endl << flush;
+            cout << "'---------------------------------'\033[0m" << flush;
+        }
+        else
+        {
+            cout << ".---------------------------------.\n"
+                << endl
+                << "|=================================|\n"
+                << "|                                 |\n"
+                << "|" << draw_item("1", "Display brightness: " + item1) << "|\n"
+                << "|" << draw_item("2", "HP Brightness: " + to_string(HPB) + "%") << "|\n"
+                << "|" << draw_item("3", "BP Brightness: " + to_string(BPB) + "%") << "|\n"
+                << "|" << draw_item("4", "PS Brightness: " + to_string(PSB) + "%") << "|\n"
+                << "|                                 |\n"
+                << "|" << draw_item("ESC", "Return", "1") << "|\n"
+                << "|                 By. Lonewolf239 |\n" << flush;
+            if (DisplayBrightness)
+                cout << "|---------------------------------|\n" << endl << flush;
+            cout << "'---------------------------------'" << flush;
+        }
+        draw_title(CurrentTitle, 33);
         if (DisplayBrightness)
             draw_parameter(12, "BRT", get_screen_brightness());
         do_clear = true;
@@ -614,8 +740,6 @@ static void settings()
             switch (_getch())
             {
             case 49:
-                if (!is_brightness_control_available())
-                    break;
                 clear;
                 DisplayBrightness = !DisplayBrightness;
                 setup_setting();
