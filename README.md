@@ -1,4 +1,4 @@
-# Windows Power Manager (WPM) v1.3
+# Windows Power Manager (WPM)
 
 Console-based power plan manager for Windows with brightness control.
 
